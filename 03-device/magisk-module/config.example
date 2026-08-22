@@ -1,0 +1,7 @@
+# Location Share device agent config
+# 安装后会复制到 /data/adb/location_share/config
+
+LS_SERVER=ws://192.168.1.100:8080
+LS_DEVICE_TOKEN=REPLACE_WITH_DEVICE_TOKEN
+LS_DEVICE_ID=1
+LS_MOCK=0

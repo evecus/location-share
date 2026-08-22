@@ -1,0 +1,6 @@
+id=location_share_device
+name=Location Share Device Agent
+version=v1.0.0
+versionCode=1
+author=location-share
+description=Realtime location uploader for Location Share server (WebSocket). Configure token in /data/adb/location_share/config.
