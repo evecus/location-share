@@ -1,0 +1,30 @@
+# Go
+*.exe
+*.test
+*.out
+01-server/server
+01-server/location.db
+01-server/dist/
+03-device/agent/location_share_agent*
+03-device/agent/dist/
+
+# Android
+02-client/.gradle/
+02-client/local.properties
+02-client/**/build/
+02-client/*.iml
+02-client/.idea/
+*.apk
+*.aab
+
+# Magisk binary (built by CI)
+03-device/magisk-module/system/bin/location_share_agent
+
+# Env / secrets
+.env
+*.pem
+*.key
+
+# OS
+.DS_Store
+Thumbs.db
