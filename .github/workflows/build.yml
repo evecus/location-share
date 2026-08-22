@@ -19,12 +19,13 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22.x"
-          cache-dependency-path: 01-server/go.sum
+          go-version: "1.23.x"
 
-      - name: Build linux binaries
+      - name: Tidy and build
         working-directory: 01-server
         run: |
+          go mod tidy
+          mkdir -p dist
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o dist/location-share-server-linux-amd64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/location-share-server-linux-arm64 .
 
@@ -43,12 +44,12 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22.x"
-          cache-dependency-path: 03-device/agent/go.sum
+          go-version: "1.23.x"
 
       - name: Cross-compile agent
         working-directory: 03-device/agent
         run: |
+          go mod tidy
           mkdir -p dist
           CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/location_share_agent_arm64 .
           CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o dist/location_share_agent_armv7 .
@@ -60,7 +61,7 @@ jobs:
           cp 03-device/magisk-module/module.prop /tmp/magisk/
           cp 03-device/magisk-module/service.sh /tmp/magisk/
           cp 03-device/magisk-module/config.example /tmp/magisk/
-          cp 03-device/magisk-module/README.md /tmp/magisk/
+          [ -f 03-device/magisk-module/README.md ] && cp 03-device/magisk-module/README.md /tmp/magisk/ || true
           cp 03-device/magisk-module/META-INF/com/google/android/update-binary /tmp/magisk/META-INF/com/google/android/
           cp 03-device/magisk-module/META-INF/com/google/android/updater-script /tmp/magisk/META-INF/com/google/android/
           cp 03-device/agent/dist/location_share_agent_arm64 /tmp/magisk/system/bin/location_share_agent
@@ -68,8 +69,7 @@ jobs:
           chmod 755 /tmp/magisk/META-INF/com/google/android/update-binary
           chmod 755 /tmp/magisk/system/bin/location_share_agent
           cd /tmp/magisk
-          zip -r9 "$GITHUB_WORKSPACE/03-device/agent/dist/location_share_device_magisk.zip" \
-            META-INF module.prop service.sh config.example system README.md
+          zip -r9 "$GITHUB_WORKSPACE/03-device/agent/dist/location_share_device_magisk.zip" .
 
       - name: Upload agent and Magisk
         uses: actions/upload-artifact@v4
