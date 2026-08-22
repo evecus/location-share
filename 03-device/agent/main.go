@@ -1,9 +1,10 @@
+// Location Share Device Agent
+// Local config UI: http://127.0.0.1:17890/
 package main
 
 import (
 	"encoding/json"
 	"flag"
-	"fmt"
 	"log"
 	"math"
 	"math/rand"
@@ -12,10 +13,22 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/gorilla/websocket"
 )
+
+const defaultConfigPort = "17890"
+
+type Config struct {
+	Server     string
+	Token      string
+	DeviceID   string
+	Mock       bool
+	ConfigPath string
+	HTTPAddr   string
+}
 
 type CommandMsg struct {
 	Type      string `json:"type"`
@@ -34,22 +47,65 @@ type LocationOut struct {
 }
 
 func main() {
-	server := flag.String("server", envOr("LS_SERVER", "ws://127.0.0.1:8080"), "WebSocket base")
-	token := flag.String("token", envOr("LS_DEVICE_TOKEN", ""), "device_token")
-	deviceID := flag.String("device-id", envOr("LS_DEVICE_ID", "1"), "device id")
-	mock := flag.Bool("mock", envOr("LS_MOCK", "") == "1", "mock GPS")
-	baseLat := flag.Float64("lat", 34.0522, "mock base lat")
-	baseLon := flag.Float64("lon", -118.2437, "mock base lon")
+	cfgPath := flag.String("config", envOr("LS_CONFIG", "/data/adb/location_share/config"), "config file path")
+	httpAddr := flag.String("http", envOr("LS_HTTP", "127.0.0.1:"+defaultConfigPort), "local config web UI")
 	flag.Parse()
-	if *token == "" {
-		log.Fatal("device token required: -token or LS_DEVICE_TOKEN")
+
+	cfg := loadConfig(*cfgPath)
+	cfg.ConfigPath = *cfgPath
+	cfg.HTTPAddr = *httpAddr
+
+	if cfg.Server == "" {
+		cfg.Server = envOr("LS_SERVER", "ws://127.0.0.1:8080")
 	}
-	wsURL := strings.TrimRight(*server, "/") + "/ws?device_token=" + url.QueryEscape(*token)
-	log.Printf("connecting to %s", maskToken(wsURL))
+	if cfg.Token == "" {
+		cfg.Token = envOr("LS_DEVICE_TOKEN", "")
+	}
+	if cfg.DeviceID == "" {
+		cfg.DeviceID = envOr("LS_DEVICE_ID", "1")
+	}
+	if envOr("LS_MOCK", "") == "1" {
+		cfg.Mock = true
+	}
+
+	var mu sync.Mutex
+	reconnect := make(chan struct{}, 1)
+
+	go startConfigHTTP(cfg, &mu, reconnect)
+	log.Printf("config UI: http://%s/  (file: %s)", cfg.HTTPAddr, cfg.ConfigPath)
+
 	for {
-		if err := runSession(wsURL, *deviceID, *mock, *baseLat, *baseLon); err != nil {
+		mu.Lock()
+		server := cfg.Server
+		token := cfg.Token
+		deviceID := cfg.DeviceID
+		mock := cfg.Mock
+		mu.Unlock()
+
+		if token == "" {
+			log.Printf("waiting for device_token via config UI http://%s/ ...", cfg.HTTPAddr)
+			select {
+			case <-reconnect:
+			case <-time.After(10 * time.Second):
+			}
+			continue
+		}
+
+		wsURL := strings.TrimRight(server, "/") + "/ws?device_token=" + url.QueryEscape(token)
+		log.Printf("connecting to %s", maskToken(wsURL))
+
+		errCh := make(chan error, 1)
+		go func() {
+			errCh <- runSession(wsURL, deviceID, mock, 34.0522, -118.2437)
+		}()
+
+		select {
+		case err := <-errCh:
 			log.Printf("session ended: %v, reconnect in 5s", err)
 			time.Sleep(5 * time.Second)
+		case <-reconnect:
+			log.Printf("config changed, reconnecting...")
+			time.Sleep(500 * time.Millisecond)
 		}
 	}
 }
@@ -62,12 +118,15 @@ func runSession(wsURL, deviceID string, mock bool, baseLat, baseLon float64) err
 	}
 	defer conn.Close()
 	log.Println("connected")
+
 	conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 	conn.SetPongHandler(func(string) error {
 		conn.SetReadDeadline(time.Now().Add(90 * time.Second))
 		return nil
 	})
+
 	done := make(chan struct{})
+	defer close(done)
 	go func() {
 		t := time.NewTicker(30 * time.Second)
 		defer t.Stop()
@@ -80,91 +139,79 @@ func runSession(wsURL, deviceID string, mock bool, baseLat, baseLon float64) err
 			}
 		}
 	}()
-	defer close(done)
+
 	for {
-		_, msg, err := conn.ReadMessage()
+		_, data, err := conn.ReadMessage()
 		if err != nil {
 			return err
 		}
 		var cmd CommandMsg
-		if err := json.Unmarshal(msg, &cmd); err != nil {
+		if err := json.Unmarshal(data, &cmd); err != nil {
 			continue
 		}
 		if cmd.Type != "get_location" {
 			continue
 		}
-		lat, lon, acc, err := getLocation(mock, baseLat, baseLon)
-		if err != nil {
-			log.Printf("get location failed: %v", err)
-			continue
-		}
+		lat, lon, acc := getLocation(mock, baseLat, baseLon)
 		out := LocationOut{
 			Type: "location", DeviceID: deviceID,
 			Lat: lat, Lon: lon, Accuracy: acc,
 			Timestamp: time.Now().Unix(), RequestID: cmd.RequestID,
 		}
-		data, _ := json.Marshal(out)
-		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
+		b, _ := json.Marshal(out)
+		if err := conn.WriteMessage(websocket.TextMessage, b); err != nil {
 			return err
 		}
-		log.Printf("sent location: lat=%.6f lon=%.6f acc=%.1f", lat, lon, acc)
+		log.Printf("sent location lat=%.6f lon=%.6f", lat, lon)
 	}
 }
 
-func getLocation(mock bool, baseLat, baseLon float64) (lat, lon, acc float64, err error) {
+func getLocation(mock bool, baseLat, baseLon float64) (lat, lon, acc float64) {
 	if mock {
 		lat = baseLat + (rand.Float64()-0.5)*0.002
 		lon = baseLon + (rand.Float64()-0.5)*0.002
-		acc = 8 + rand.Float64()*10
-		return lat, lon, acc, nil
+		acc = 5 + rand.Float64()*10
+		return
 	}
-	if b, e := os.ReadFile("/data/local/tmp/ls_last_location.json"); e == nil {
-		var m map[string]float64
-		if json.Unmarshal(b, &m) == nil {
-			if la, ok1 := m["lat"]; ok1 {
-				if lo, ok2 := m["lon"]; ok2 {
-					a := 15.0
-					if v, ok := m["accuracy"]; ok {
-						a = v
-					}
-					return la, lo, a, nil
-				}
-			}
-		}
+	if lat, lon, acc, ok := readAndroidLocation(); ok {
+		return lat, lon, acc
 	}
-	if out, e := exec.Command("dumpsys", "location").CombinedOutput(); e == nil {
-		if la, lo, a, ok := parseDumpsysLocation(string(out)); ok {
-			return la, lo, a, nil
-		}
-	}
-	return 0, 0, 0, fmt.Errorf("no location source (use -mock or write /data/local/tmp/ls_last_location.json)")
+	return baseLat, baseLon, 50
 }
 
-func parseDumpsysLocation(s string) (lat, lon, acc float64, ok bool) {
-	for _, line := range strings.Split(s, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.Contains(line, "location=") && !strings.Contains(line, "Location[") {
-			continue
-		}
-		for i := 0; i < len(line)-5; i++ {
-			if (line[i] >= '0' && line[i] <= '9' || line[i] == '-') && strings.Contains(line[i:], ",") {
-				part := line[i:]
-				end := strings.IndexAny(part, " ]\t")
-				if end > 0 {
-					part = part[:end]
-				}
-				bits := strings.Split(part, ",")
-				if len(bits) >= 2 {
-					la, e1 := strconv.ParseFloat(strings.TrimSpace(bits[0]), 64)
-					lo, e2 := strconv.ParseFloat(strings.TrimSpace(bits[1]), 64)
-					if e1 == nil && e2 == nil && math.Abs(la) <= 90 && math.Abs(lo) <= 180 {
-						return la, lo, 20, true
-					}
-				}
-			}
-		}
+func readAndroidLocation() (lat, lon, acc float64, ok bool) {
+	out, err := exec.Command("dumpsys", "location").CombinedOutput()
+	if err != nil {
+		return 0, 0, 0, false
 	}
-	return 0, 0, 0, false
+	s := string(out)
+	lat = parseCoord(s, "Latitude:")
+	lon = parseCoord(s, "Longitude:")
+	if lat == 0 && lon == 0 {
+		return 0, 0, 0, false
+	}
+	acc = 20
+	if math.Abs(lat) > 90 || math.Abs(lon) > 180 {
+		return 0, 0, 0, false
+	}
+	return lat, lon, acc, true
+}
+
+func parseCoord(s, key string) float64 {
+	i := strings.Index(s, key)
+	if i < 0 {
+		return 0
+	}
+	rest := strings.TrimSpace(s[i+len(key):])
+	fields := strings.Fields(rest)
+	if len(fields) == 0 {
+		return 0
+	}
+	v, err := strconv.ParseFloat(strings.Trim(fields[0], ","), 64)
+	if err != nil {
+		return 0
+	}
+	return v
 }
 
 func envOr(k, def string) string {
@@ -176,7 +223,7 @@ func envOr(k, def string) string {
 
 func maskToken(u string) string {
 	if i := strings.Index(u, "device_token="); i >= 0 {
-		return u[:i+13] + "***"
+		return u[:i+12] + "***"
 	}
 	return u
 }
