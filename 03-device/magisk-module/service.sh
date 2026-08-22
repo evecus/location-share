@@ -1,5 +1,5 @@
 #!/system/bin/sh
-# Magisk late_start service: start location share device agent
+# Magisk late_start: location share device agent + local config UI on :17890
 
 MODDIR=${0%/*}
 CONFIG_DIR=/data/adb/location_share
@@ -13,22 +13,18 @@ if [ ! -f "$CONFIG" ]; then
   if [ -f "$MODDIR/config.example" ]; then
     cp "$MODDIR/config.example" "$CONFIG"
   else
-    cat > "$CONFIG" << 'EOF'
+    cat > "$CONFIG" << 'CFGEOF'
 LS_SERVER=ws://127.0.0.1:8080
-LS_DEVICE_TOKEN=REPLACE_WITH_DEVICE_TOKEN
+LS_DEVICE_TOKEN=
 LS_DEVICE_ID=1
 LS_MOCK=0
-EOF
+CFGEOF
   fi
-  log -p i -t LocationShare "config created at $CONFIG — please edit token"
+  log -p i -t LocationShare "config created at $CONFIG — open http://127.0.0.1:17890 to edit"
 fi
 
-[ -f "$CONFIG" ] && . "$CONFIG"
-
-if [ -z "$LS_DEVICE_TOKEN" ] || [ "$LS_DEVICE_TOKEN" = "REPLACE_WITH_DEVICE_TOKEN" ]; then
-  log -p w -t LocationShare "LS_DEVICE_TOKEN not set, agent not started"
-  exit 0
-fi
+# shellcheck disable=SC1090
+[ -f "$CONFIG" ] && . "$CONFIG" 2>/dev/null
 
 if [ ! -x "$AGENT" ]; then
   if [ -f "$AGENT" ]; then
@@ -45,6 +41,8 @@ if pgrep -f location_share_agent >/dev/null 2>&1; then
 fi
 
 export LS_SERVER LS_DEVICE_TOKEN LS_DEVICE_ID LS_MOCK
+export LS_CONFIG="$CONFIG"
+export LS_HTTP="127.0.0.1:17890"
 
-nohup "$AGENT" >>"$LOG" 2>&1 &
-log -p i -t LocationShare "agent started pid=$!"
+nohup "$AGENT" -config "$CONFIG" -http "127.0.0.1:17890" >>"$LOG" 2>&1 &
+log -p i -t LocationShare "agent started pid=$! config UI http://127.0.0.1:17890"

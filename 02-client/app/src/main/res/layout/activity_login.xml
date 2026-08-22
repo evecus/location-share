@@ -1,18 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="@color/background">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
     android:orientation="vertical"
     android:padding="28dp"
-    android:gravity="center_horizontal"
-    android:background="@color/background">
+    android:gravity="center_horizontal">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="📍"
         android:textSize="48sp"
-        android:layout_marginTop="48dp"
+        android:layout_marginTop="32dp"
         android:layout_marginBottom="8dp" />
 
     <TextView
@@ -30,7 +35,33 @@
         android:text="实时位置 · 不保存历史"
         android:textSize="14sp"
         android:textColor="@color/text_secondary"
-        android:layout_marginBottom="36dp" />
+        android:layout_marginBottom="28dp" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="服务器地址"
+        android:textSize="12sp"
+        android:textColor="@color/text_secondary" />
+
+    <EditText
+        android:id="@+id/etServer"
+        android:layout_width="match_parent"
+        android:layout_height="52dp"
+        android:hint="http://192.168.1.10:8080"
+        android:inputType="textUri"
+        android:paddingHorizontal="16dp"
+        android:layout_marginTop="4dp"
+        android:background="@android:drawable/edit_text"
+        android:textColor="@color/text_primary" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="用户名"
+        android:textSize="12sp"
+        android:textColor="@color/text_secondary"
+        android:layout_marginTop="12dp" />
 
     <EditText
         android:id="@+id/etUsername"
@@ -39,8 +70,17 @@
         android:hint="用户名"
         android:inputType="text"
         android:paddingHorizontal="16dp"
+        android:layout_marginTop="4dp"
         android:background="@android:drawable/edit_text"
         android:textColor="@color/text_primary" />
+
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="密码"
+        android:textSize="12sp"
+        android:textColor="@color/text_secondary"
+        android:layout_marginTop="12dp" />
 
     <EditText
         android:id="@+id/etPassword"
@@ -49,7 +89,7 @@
         android:hint="密码"
         android:inputType="textPassword"
         android:paddingHorizontal="16dp"
-        android:layout_marginTop="12dp"
+        android:layout_marginTop="4dp"
         android:background="@android:drawable/edit_text"
         android:textColor="@color/text_primary" />
 
@@ -71,3 +111,4 @@
         android:backgroundTint="@color/surface"
         android:layout_marginTop="10dp" />
 </LinearLayout>
+</ScrollView>

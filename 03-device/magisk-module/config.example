@@ -1,7 +1,8 @@
-# Location Share device agent config
-# 安装后会复制到 /data/adb/location_share/config
+# Location Share device agent
+# 浏览器配置: 手机打开 http://127.0.0.1:17890
+# 电脑: adb forward tcp:17890 tcp:17890 → http://127.0.0.1:17890
 
 LS_SERVER=ws://192.168.1.100:8080
-LS_DEVICE_TOKEN=REPLACE_WITH_DEVICE_TOKEN
+LS_DEVICE_TOKEN=
 LS_DEVICE_ID=1
 LS_MOCK=0
