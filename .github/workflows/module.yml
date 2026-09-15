@@ -1,0 +1,50 @@
+name: Build magisk-module
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  device-agent:
+    name: Build Device Agent and Magisk
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+
+      - name: Cross-compile agent
+        working-directory: 03-device/agent
+        run: |
+          go mod tidy
+          mkdir -p dist
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags="-s -w" -o dist/location_share_agent_arm64 .
+          CGO_ENABLED=0 GOOS=linux GOARCH=arm GOARM=7 go build -ldflags="-s -w" -o dist/location_share_agent_armv7 .
+
+      - name: Package Magisk module (arm64)
+        run: |
+          mkdir -p /tmp/magisk/META-INF/com/google/android
+          mkdir -p /tmp/magisk/system/bin
+          cp 03-device/magisk-module/module.prop /tmp/magisk/
+          cp 03-device/magisk-module/service.sh /tmp/magisk/
+          cp 03-device/magisk-module/config.example /tmp/magisk/
+          [ -f 03-device/magisk-module/README.md ] && cp 03-device/magisk-module/README.md /tmp/magisk/ || true
+          cp 03-device/magisk-module/META-INF/com/google/android/update-binary /tmp/magisk/META-INF/com/google/android/
+          cp 03-device/magisk-module/META-INF/com/google/android/updater-script /tmp/magisk/META-INF/com/google/android/
+          cp 03-device/agent/dist/location_share_agent_arm64 /tmp/magisk/system/bin/location_share_agent
+          chmod 755 /tmp/magisk/service.sh
+          chmod 755 /tmp/magisk/META-INF/com/google/android/update-binary
+          chmod 755 /tmp/magisk/system/bin/location_share_agent
+          cd /tmp/magisk
+          zip -r9 "$GITHUB_WORKSPACE/03-device/agent/dist/location_share_device_magisk.zip" .
+
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: test
+          files: 03-device/agent/dist/location_share_device_magisk.zip
