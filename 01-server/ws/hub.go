@@ -133,25 +133,46 @@ func (h *Hub) SubscribeLocation(userID, deviceID int64, requestID string) {
 }
 
 func (h *Hub) ForwardLocation(fromDeviceID int64, loc models.LocationMsg) {
+	// 补全设备展示信息
+	if dev, err := db.GetDeviceByID(fromDeviceID); err == nil && dev != nil {
+		if loc.DeviceID == "" {
+			loc.DeviceID = db.DeviceIDToString(dev.ID)
+		}
+		loc.DeviceName = dev.DeviceName
+		if u, err := db.GetUserByID(dev.UserID); err == nil && u != nil {
+			loc.OwnerUsername = u.Username
+		}
+	}
 	data, err := json.Marshal(loc)
 	if err != nil {
 		return
 	}
-	h.mu.RLock()
-	userIDs := make([]int64, 0, len(h.subs)+1)
 	seen := map[int64]bool{}
-	for _, uid := range h.subs {
-		if !seen[uid] {
-			seen[uid] = true
+	userIDs := make([]int64, 0, 4)
+
+	h.mu.RLock()
+	// 优先按 request_id 精确投递
+	if loc.RequestID != "" {
+		if uid, ok := h.subs[loc.RequestID]; ok {
 			userIDs = append(userIDs, uid)
+			seen[uid] = true
+		}
+	} else {
+		for _, uid := range h.subs {
+			if !seen[uid] {
+				seen[uid] = true
+				userIDs = append(userIDs, uid)
+			}
 		}
 	}
 	h.mu.RUnlock()
+
 	if dev, err := db.GetDeviceByID(fromDeviceID); err == nil && dev != nil {
 		if !seen[dev.UserID] {
 			userIDs = append(userIDs, dev.UserID)
 		}
 	}
+
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	for _, uid := range userIDs {
@@ -161,6 +182,24 @@ func (h *Hub) ForwardLocation(fromDeviceID int64, loc models.LocationMsg) {
 				case c.Send <- data:
 				default:
 				}
+			}
+		}
+	}
+}
+
+// NotifyUser 向某用户所有在线客户端推送任意 JSON 消息（如授权结果）
+func (h *Hub) NotifyUser(userID int64, msg interface{}) {
+	data, err := json.Marshal(msg)
+	if err != nil {
+		return
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if clients, ok := h.userClients[userID]; ok {
+		for c := range clients {
+			select {
+			case c.Send <- data:
+			default:
 			}
 		}
 	}
