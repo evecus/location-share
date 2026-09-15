@@ -92,8 +92,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # 关键点：旧版默认会装已废弃的 `tools` 包，导致
+      # "Failed to find package 'tools'"。
+      # 方案：packages 置空，再手动安装需要的包。
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: ""
+
+      - name: Install SDK packages
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Install Gradle and build debug APK
         working-directory: 02-client
@@ -102,7 +112,7 @@ jobs:
           curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp
           export PATH="/tmp/gradle-${GRADLE_VERSION}/bin:$PATH"
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
           gradle assembleDebug --no-daemon --stacktrace
 
       - name: Upload APK
