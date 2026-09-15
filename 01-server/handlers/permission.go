@@ -4,6 +4,7 @@ import (
 	"net/http"
 
 	"location-share-server/db"
+	"location-share-server/ws"
 
 	"github.com/gin-gonic/gin"
 )
@@ -112,9 +113,39 @@ func RespondPermission(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+	// 回应前先查出请求方与设备，便于通知
+	list, _ := db.ListPendingForOwner(userID)
+	var requesterID int64
+	var deviceID int64
+	var deviceName string
+	for _, p := range list {
+		if p.ID == req.PermissionID {
+			requesterID = p.RequesterUserID
+			deviceID = p.TargetDeviceID
+			deviceName = p.DeviceName
+			break
+		}
+	}
 	if err := db.RespondPermission(userID, req.PermissionID, req.Accept); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	// 实时通知申请方（若在线）
+	if hub := ws.GetHub(); hub != nil && requesterID > 0 {
+		if req.Accept {
+			hub.NotifyUser(requesterID, gin.H{
+				"type":        "permission_granted",
+				"device_id":   deviceID,
+				"device_name": deviceName,
+				"message":     "对方已同意你查看该设备位置",
+			})
+		} else {
+			hub.NotifyUser(requesterID, gin.H{
+				"type":      "permission_denied",
+				"device_id": deviceID,
+				"message":   "对方拒绝了你的授权请求",
+			})
+		}
 	}
 	if req.Accept {
 		c.JSON(http.StatusOK, gin.H{"message": "permission granted"})
