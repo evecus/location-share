@@ -18,9 +18,6 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # 关键点：旧版默认会装已废弃的 `tools` 包，导致
-      # "Failed to find package 'tools'"。
-      # 方案：packages 置空，再手动安装需要的包。
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
         with:
@@ -31,18 +28,33 @@ jobs:
           yes | sdkmanager --licenses >/dev/null 2>&1 || true
           sdkmanager "platform-tools" "platforms;android-34" "build-tools;34.0.0"
 
-      - name: Install Gradle and build debug APK
+      - name: Decode signing keystore
         working-directory: 02-client
+        run: |
+          echo "${{ secrets.KEYSTORE_BASE64 }}" | base64 -d > app/release.keystore
+
+      - name: Install Gradle and build release APK
+        working-directory: 02-client
+        env:
+          KEYSTORE_PATH: release.keystore
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
         run: |
           GRADLE_VERSION=8.2.1
           curl -fsSL "https://services.gradle.org/distributions/gradle-${GRADLE_VERSION}-bin.zip" -o /tmp/gradle.zip
           unzip -q /tmp/gradle.zip -d /tmp
           export PATH="/tmp/gradle-${GRADLE_VERSION}/bin:$PATH"
           echo "sdk.dir=${ANDROID_HOME}" > local.properties
-          gradle assembleDebug --no-daemon --stacktrace
+          gradle assembleRelease --no-daemon --stacktrace
+
+      - name: Cleanup keystore
+        if: always()
+        working-directory: 02-client
+        run: rm -f app/release.keystore
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: test
-          files: 02-client/app/build/outputs/apk/debug/*.apk
+          files: 02-client/app/build/outputs/apk/release/*.apk
