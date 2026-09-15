@@ -9,6 +9,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.location.Criteria
 import android.location.Location
 import android.location.LocationListener
 import android.location.LocationManager
@@ -31,9 +32,9 @@ import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * 前台服务：以 device_token 连接服务器 WebSocket，
- * 收到 get_location 时用系统 LocationManager 上报本机 GPS。
- * 不依赖 Google Play 服务。
+ * 保活前台服务：进程存活时维持轻量设备 WebSocket，仅收「授权相关由用户通道处理」
+ * 与「要位置 get_location」。
+ * 不持续定位：仅在收到 get_location 时用 LocationManager 单次取点再上报。
  */
 class DeviceShareService : Service() {
 
@@ -46,35 +47,17 @@ class DeviceShareService : Service() {
         const val KEY_DEVICE_TOKEN = "device_token"
         const val KEY_DEVICE_ID = "device_id"
         const val KEY_DEVICE_NAME = "device_name"
-        const val KEY_SHARING = "sharing_enabled"
 
-        const val ACTION_START = "com.locationshare.client.START_SHARE"
-        const val ACTION_STOP = "com.locationshare.client.STOP_SHARE"
+        const val ACTION_START = "com.locationshare.client.START_CONN"
+        const val ACTION_STOP = "com.locationshare.client.STOP_CONN"
 
-        /** 当前进程内服务是否真的在跑（强杀后为 false） */
         @JvmStatic
         val processRunning = AtomicBoolean(false)
 
         fun isServiceProcessRunning(): Boolean = processRunning.get()
 
-        /**
-         * UI 用的「是否在分享」：必须以服务实际在跑为准。
-         * 仅 prefs 为 true 但进程已死时，返回 false，避免假「正在分享」。
-         */
-        fun isSharing(ctx: Context): Boolean {
-            return processRunning.get()
-        }
-
-        /** 用户是否希望保持分享（用于进程被杀后自动恢复） */
-        fun wantsSharing(ctx: Context): Boolean {
-            return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getBoolean(KEY_SHARING, false)
-        }
-
-        fun getSavedDeviceToken(ctx: Context): String? {
-            return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-                .getString(KEY_DEVICE_TOKEN, null)
-        }
+        fun getSavedDeviceToken(ctx: Context): String? =
+            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getString(KEY_DEVICE_TOKEN, null)
 
         fun saveDevice(ctx: Context, token: String, id: Long, name: String) {
             ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
@@ -84,13 +67,9 @@ class DeviceShareService : Service() {
                 .apply()
         }
 
-        fun setSharing(ctx: Context, on: Boolean) {
-            ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit()
-                .putBoolean(KEY_SHARING, on)
-                .apply()
-        }
-
-        fun start(ctx: Context) {
+        /** 有本机 device_token 则启动保活连接（无开始/停止分享开关） */
+        fun ensureRunning(ctx: Context) {
+            if (getSavedDeviceToken(ctx).isNullOrBlank()) return
             val i = Intent(ctx, DeviceShareService::class.java).apply { action = ACTION_START }
             ContextCompat.startForegroundService(ctx, i)
         }
@@ -105,24 +84,13 @@ class DeviceShareService : Service() {
     private var webSocket: WebSocket? = null
     private val running = AtomicBoolean(false)
     private var locationManager: LocationManager? = null
-    @Volatile private var lastLocation: Location? = null
-
-    private val locationListener = object : LocationListener {
-        override fun onLocationChanged(location: Location) {
-            lastLocation = location
-            Log.d(TAG, "location update ${location.latitude},${location.longitude}")
-        }
-
-        @Deprecated("Deprecated in API")
-        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
-        override fun onProviderEnabled(provider: String) {}
-        override fun onProviderDisabled(provider: String) {}
-    }
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private val okClient by lazy {
         OkHttpClient.Builder()
             .pingInterval(25, TimeUnit.SECONDS)
             .readTimeout(0, TimeUnit.MILLISECONDS)
+            .retryOnConnectionFailure(true)
             .build()
     }
 
@@ -137,44 +105,41 @@ class DeviceShareService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
             ACTION_STOP -> {
-                stopSharing()
+                shutdown()
                 stopSelf()
                 return START_NOT_STICKY
             }
             else -> {
                 val token = getSavedDeviceToken(this)
                 if (token.isNullOrBlank()) {
-                    Log.w(TAG, "no device_token, stop")
+                    Log.w(TAG, "no device_token")
                     stopSelf()
                     return START_NOT_STICKY
                 }
-                startForeground(NOTIF_ID, buildNotification("正在连接…"))
-                setSharing(this, true)
+                startForeground(NOTIF_ID, buildNotification("连接中…"))
                 processRunning.set(true)
                 if (running.compareAndSet(false, true)) {
-                    startLocationUpdates()
+                    connectDeviceWs(token)
+                } else if (webSocket == null) {
                     connectDeviceWs(token)
                 }
             }
         }
+        // 被系统回收后尽量重启
         return START_STICKY
     }
 
-    private fun stopSharing() {
+    private fun shutdown() {
         running.set(false)
         processRunning.set(false)
-        setSharing(this, false)
-        stopLocationUpdates()
         webSocket?.close(1000, "stop")
         webSocket = null
         stopForeground(STOP_FOREGROUND_REMOVE)
     }
 
     override fun onDestroy() {
-        // 正常销毁时清理；强杀时 onDestroy 可能不走，processRunning 会随进程一起消失
         running.set(false)
         processRunning.set(false)
-        stopLocationUpdates()
         webSocket?.close(1000, "destroy")
         webSocket = null
         super.onDestroy()
@@ -184,10 +149,10 @@ class DeviceShareService : Service() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val ch = NotificationChannel(
                 CHANNEL_ID,
-                "位置分享服务",
+                "位置连接服务",
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
-                description = "本机作为设备在线，响应位置请求"
+                description = "保持轻量连接，仅在被请求时获取定位"
             }
             getSystemService(NotificationManager::class.java).createNotificationChannel(ch)
         }
@@ -200,18 +165,19 @@ class DeviceShareService : Service() {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
         return NotificationCompat.Builder(this, CHANNEL_ID)
-            .setContentTitle("位置分享中")
+            .setContentTitle("位置服务已连接")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.ic_menu_mylocation)
             .setContentIntent(pi)
             .setOngoing(true)
             .setOnlyAlertOnce(true)
+            .setSilent(true)
             .build()
     }
 
     private fun updateNotif(text: String) {
-        val nm = getSystemService(NotificationManager::class.java)
-        nm.notify(NOTIF_ID, buildNotification(text))
+        getSystemService(NotificationManager::class.java)
+            .notify(NOTIF_ID, buildNotification(text))
     }
 
     private fun hasLocationPermission(): Boolean {
@@ -220,95 +186,27 @@ class DeviceShareService : Service() {
         return fine == PackageManager.PERMISSION_GRANTED || coarse == PackageManager.PERMISSION_GRANTED
     }
 
-    private fun startLocationUpdates() {
-        if (!hasLocationPermission()) {
-            Log.w(TAG, "no location permission")
-            return
-        }
-        val lm = locationManager ?: return
-        try {
-            // 先读缓存
-            val lastGps = try {
-                lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
-            } catch (_: SecurityException) {
-                null
-            }
-            val lastNet = try {
-                lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            } catch (_: SecurityException) {
-                null
-            }
-            lastLocation = pickBetter(lastGps, lastNet) ?: lastLocation
-
-            val minTime = 8_000L
-            val minDist = 5f
-            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
-                lm.requestLocationUpdates(
-                    LocationManager.GPS_PROVIDER, minTime, minDist,
-                    locationListener, Looper.getMainLooper()
-                )
-            }
-            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
-                lm.requestLocationUpdates(
-                    LocationManager.NETWORK_PROVIDER, minTime, minDist,
-                    locationListener, Looper.getMainLooper()
-                )
-            }
-            // 部分机型还有 PASSIVE
-            try {
-                if (lm.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) {
-                    lm.requestLocationUpdates(
-                        LocationManager.PASSIVE_PROVIDER, minTime, minDist,
-                        locationListener, Looper.getMainLooper()
-                    )
-                }
-            } catch (_: Exception) {
-            }
-            Log.i(TAG, "LocationManager updates started, last=${lastLocation?.latitude},${lastLocation?.longitude}")
-        } catch (e: SecurityException) {
-            Log.e(TAG, "location security", e)
-        } catch (e: Exception) {
-            Log.e(TAG, "startLocationUpdates", e)
-        }
-    }
-
-    private fun stopLocationUpdates() {
-        try {
-            locationManager?.removeUpdates(locationListener)
-        } catch (_: Exception) {
-        }
-    }
-
-    private fun pickBetter(a: Location?, b: Location?): Location? {
-        if (a == null) return b
-        if (b == null) return a
-        // 优先更新时间新的；相近时优先精度更好的
-        val timeDelta = a.time - b.time
-        if (timeDelta > 30_000) return a
-        if (timeDelta < -30_000) return b
-        val accA = if (a.hasAccuracy()) a.accuracy else Float.MAX_VALUE
-        val accB = if (b.hasAccuracy()) b.accuracy else Float.MAX_VALUE
-        return if (accA <= accB) a else b
-    }
-
     private fun connectDeviceWs(deviceToken: String) {
         val url = ApiClient.deviceWsUrl(deviceToken)
-        Log.i(TAG, "connecting device WS")
+        Log.i(TAG, "device WS connecting")
         val req = Request.Builder().url(url).build()
         webSocket = okClient.newWebSocket(req, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Log.i(TAG, "device WS open")
-                updateNotif("本机在线，等待位置请求")
+                updateNotif("在线，等待授权/位置请求（不持续定位）")
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     val cmd = gson.fromJson(text, DeviceCommand::class.java)
                     if (cmd.type == "get_location") {
-                        respondLocation(webSocket, cmd.request_id)
+                        // 仅此时取一次定位
+                        fetchLocationOnce { loc ->
+                            sendLoc(webSocket, loc, cmd.request_id)
+                        }
                     }
                 } catch (e: Exception) {
-                    Log.w(TAG, "parse cmd fail", e)
+                    Log.w(TAG, "parse cmd", e)
                 }
             }
 
@@ -319,17 +217,19 @@ class DeviceShareService : Service() {
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.i(TAG, "device WS closed $code $reason")
+                Log.i(TAG, "device WS closed")
+                this@DeviceShareService.webSocket = null
                 if (running.get()) {
-                    updateNotif("连接断开，5秒后重连…")
+                    updateNotif("连接断开，重连中…")
                     scheduleReconnect(deviceToken)
                 }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
                 Log.w(TAG, "device WS fail: ${t.message}")
+                this@DeviceShareService.webSocket = null
                 if (running.get()) {
-                    updateNotif("连接失败，5秒后重连…")
+                    updateNotif("连接失败，重连中…")
                     scheduleReconnect(deviceToken)
                 }
             }
@@ -337,60 +237,112 @@ class DeviceShareService : Service() {
     }
 
     private fun scheduleReconnect(token: String) {
-        Handler(Looper.getMainLooper()).postDelayed({
-            if (running.get()) {
-                webSocket?.cancel()
+        mainHandler.postDelayed({
+            if (running.get() && webSocket == null) {
                 connectDeviceWs(token)
             }
         }, 5_000)
     }
 
-    private fun respondLocation(ws: WebSocket, requestId: String?) {
-        val deviceId = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
-            .getLong(KEY_DEVICE_ID, 0).toString()
-
-        // 再尝试刷新 lastKnown
-        refreshLastKnown()
-
-        val loc = lastLocation
-        val lat: Double
-        val lon: Double
-        val acc: Double
-        if (loc != null) {
-            lat = loc.latitude
-            lon = loc.longitude
-            acc = if (loc.hasAccuracy()) loc.accuracy.toDouble() else 30.0
-        } else {
-            lat = 0.0
-            lon = 0.0
-            acc = 9999.0
-            Log.w(TAG, "no location available")
+    /**
+     * 单次定位：优先 lastKnown，否则 requestSingleUpdate，超时则用 lastKnown/空。
+     */
+    private fun fetchLocationOnce(cb: (Location?) -> Unit) {
+        if (!hasLocationPermission()) {
+            Log.w(TAG, "no location permission")
+            cb(null)
+            return
         }
-        sendLoc(ws, deviceId, lat, lon, acc, requestId)
-    }
+        val lm = locationManager ?: run {
+            cb(null)
+            return
+        }
 
-    private fun refreshLastKnown() {
-        if (!hasLocationPermission()) return
-        val lm = locationManager ?: return
+        var last: Location? = null
         try {
             val gps = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
             val net = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
-            val better = pickBetter(gps, net)
-            if (better != null) {
-                lastLocation = pickBetter(lastLocation, better)
+            last = when {
+                gps != null && net != null ->
+                    if (gps.time >= net.time) gps else net
+                gps != null -> gps
+                else -> net
             }
         } catch (_: SecurityException) {
         }
+
+        // 最近 2 分钟内的缓存可直接用，减少等待
+        if (last != null && System.currentTimeMillis() - last.time < 120_000) {
+            cb(last)
+            return
+        }
+
+        val criteria = Criteria().apply {
+            accuracy = Criteria.ACCURACY_FINE
+            powerRequirement = Criteria.POWER_MEDIUM
+        }
+        val provider = try {
+            lm.getBestProvider(criteria, true)
+                ?: listOf(
+                    LocationManager.GPS_PROVIDER,
+                    LocationManager.NETWORK_PROVIDER
+                ).firstOrNull { lm.isProviderEnabled(it) }
+        } catch (_: Exception) {
+            null
+        }
+
+        if (provider == null) {
+            cb(last)
+            return
+        }
+
+        val done = AtomicBoolean(false)
+        val listener = object : LocationListener {
+            override fun onLocationChanged(location: Location) {
+                if (done.compareAndSet(false, true)) {
+                    try {
+                        lm.removeUpdates(this)
+                    } catch (_: Exception) {
+                    }
+                    cb(location)
+                }
+            }
+
+            @Deprecated("Deprecated in API")
+            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+            override fun onProviderEnabled(provider: String) {}
+            override fun onProviderDisabled(provider: String) {}
+        }
+
+        try {
+            lm.requestSingleUpdate(provider, listener, Looper.getMainLooper())
+        } catch (e: SecurityException) {
+            cb(last)
+            return
+        } catch (e: Exception) {
+            Log.e(TAG, "requestSingleUpdate", e)
+            cb(last)
+            return
+        }
+
+        // 12 秒超时
+        mainHandler.postDelayed({
+            if (done.compareAndSet(false, true)) {
+                try {
+                    lm.removeUpdates(listener)
+                } catch (_: Exception) {
+                }
+                cb(last)
+            }
+        }, 12_000)
     }
 
-    private fun sendLoc(
-        ws: WebSocket,
-        deviceId: String,
-        lat: Double,
-        lon: Double,
-        acc: Double,
-        requestId: String?
-    ) {
+    private fun sendLoc(ws: WebSocket, loc: Location?, requestId: String?) {
+        val deviceId = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
+            .getLong(KEY_DEVICE_ID, 0).toString()
+        val lat = loc?.latitude ?: 0.0
+        val lon = loc?.longitude ?: 0.0
+        val acc = loc?.let { if (it.hasAccuracy()) it.accuracy.toDouble() else 50.0 } ?: 9999.0
         val msg = LocationMsg(
             type = "location",
             device_id = deviceId,
@@ -400,9 +352,11 @@ class DeviceShareService : Service() {
             timestamp = System.currentTimeMillis() / 1000,
             request_id = requestId
         )
-        val json = gson.toJson(msg)
-        val ok = ws.send(json)
+        val ok = ws.send(gson.toJson(msg))
         Log.i(TAG, "sent location lat=$lat lon=$lon ok=$ok")
-        updateNotif("已上报位置 ${"%.5f".format(lat)}, ${"%.5f".format(lon)}")
+        updateNotif(
+            if (loc != null) "已响应位置 ${"%.5f".format(lat)}, ${"%.5f".format(lon)}"
+            else "已响应（暂无有效定位）"
+        )
     }
 }

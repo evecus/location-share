@@ -34,7 +34,6 @@ class DeviceListActivity : AppCompatActivity() {
     private lateinit var tvShareStatus: TextView
     private lateinit var tvIncoming: TextView
     private lateinit var btnRegisterDevice: Button
-    private lateinit var btnToggleShare: Button
     private lateinit var mapView: MapView
     private var devices: List<Device> = emptyList()
     private var incoming: List<IncomingPermission> = emptyList()
@@ -45,8 +44,12 @@ class DeviceListActivity : AppCompatActivity() {
     private val permissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
-        if (results.values.any { it }) startSharingIfReady()
-        else Toast.makeText(this, "需要定位权限才能分享本机位置", Toast.LENGTH_LONG).show()
+        if (results.values.any { it }) {
+            DeviceShareService.ensureRunning(this)
+            updateShareUi()
+        } else {
+            Toast.makeText(this, "需要定位权限，被请求位置时才能上报", Toast.LENGTH_LONG).show()
+        }
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -63,7 +66,6 @@ class DeviceListActivity : AppCompatActivity() {
         tvShareStatus = findViewById(R.id.tvShareStatus)
         tvIncoming = findViewById(R.id.tvIncoming)
         btnRegisterDevice = findViewById(R.id.btnRegisterDevice)
-        btnToggleShare = findViewById(R.id.btnToggleShare)
         mapView = findViewById(R.id.mapView)
         val btnRefresh = findViewById<Button>(R.id.btnRefresh)
         val btnLogout = findViewById<Button>(R.id.btnLogout)
@@ -77,14 +79,13 @@ class DeviceListActivity : AppCompatActivity() {
         }
 
         btnRegisterDevice.setOnClickListener { registerThisDevice() }
-        btnToggleShare.setOnClickListener { toggleSharing() }
         btnRefresh.setOnClickListener {
             loadDevices()
             loadIncoming()
         }
         btnLogout.setOnClickListener {
             // 停止本机分享
-            if (DeviceShareService.isSharing(this)) {
+            if (DeviceShareService.isServiceProcessRunning()) {
                 DeviceShareService.stop(this)
             }
             LoginActivity.clearSession(this)
@@ -212,41 +213,15 @@ class DeviceListActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         mapView.onResume()
-        // 强杀后 prefs 可能仍是「想分享」，但服务已死 → 自动恢复连接
-        reconcileSharingState()
+        // 已注册本机则保持保活连接（轻量 WS，不持续定位）
+        DeviceShareService.ensureRunning(this)
         updateShareUi()
         loadDevices()
         loadIncoming()
-    }
-
-    /**
-     * 校正分享状态：
-     * - 服务未在跑但用户曾开启分享 → 自动重新 start（恢复上线）
-     * - 服务未在跑 → UI 显示未分享，避免假「正在分享」
-     */
-    private fun reconcileSharingState() {
-        val wants = DeviceShareService.wantsSharing(this)
-        val alive = DeviceShareService.isServiceProcessRunning()
-        if (wants && !alive) {
-            val token = DeviceShareService.getSavedDeviceToken(this)
-            if (!token.isNullOrBlank()) {
-                // 有 token 则尝试恢复分享（权限已有时才会真正连上）
-                DeviceShareService.start(this)
-                Toast.makeText(this, "已恢复位置分享连接…", Toast.LENGTH_SHORT).show()
-                // 稍后再刷新在线状态
-                tvShareStatus.postDelayed({
-                    updateShareUi()
-                    loadDevices()
-                }, 2000)
-            } else {
-                DeviceShareService.setSharing(this, false)
-            }
-        }
-    }
-
-    override fun onPause() {
-        super.onPause()
-        mapView.onPause()
+        tvShareStatus.postDelayed({
+            updateShareUi()
+            loadDevices()
+        }, 2500)
     }
 
     private fun updateShareUi() {
@@ -254,55 +229,19 @@ class DeviceListActivity : AppCompatActivity() {
         val token = prefs.getString(DeviceShareService.KEY_DEVICE_TOKEN, null)
         val name = prefs.getString(DeviceShareService.KEY_DEVICE_NAME, null)
         val id = prefs.getLong(DeviceShareService.KEY_DEVICE_ID, 0)
-        val sharing = DeviceShareService.isSharing(this) // 服务是否真在跑
-        val wants = DeviceShareService.wantsSharing(this)
+        val alive = DeviceShareService.isServiceProcessRunning()
         if (token.isNullOrBlank()) {
-            tvShareStatus.text = "未注册本机。注册并开始分享后，别人才能向你申请看位置。"
-            btnToggleShare.isEnabled = false
-            btnToggleShare.text = "开始分享"
+            tvShareStatus.text = "未注册本机。注册后自动保持轻量连接，仅在被要位置时定位。"
+            btnRegisterDevice.text = "注册本机"
         } else {
-            val status = when {
-                sharing -> "🟢 正在分享（已连接服务器）"
-                wants -> "🟡 分享已中断（进程被杀），正在尝试恢复…"
-                else -> "⚫ 已注册未分享"
-            }
-            tvShareStatus.text = "$status\n$name (id=$id)"
+            val conn = if (alive) "🟢 连接服务中（不持续定位）" else "🟡 连接未运行（将自动拉起）"
+            tvShareStatus.text = "$conn\n$name (id=$id)\n别人要位置时才会使用系统定位"
             btnRegisterDevice.text = "重新注册"
-            btnToggleShare.isEnabled = true
-            // 服务在跑 → 显示停止；否则显示开始（即使 prefs 残留）
-            btnToggleShare.text = if (sharing) "停止分享" else "开始分享"
+            DeviceShareService.ensureRunning(this)
         }
     }
 
-    private fun registerThisDevice() {
-        val name = Build.MODEL?.takeIf { it.isNotBlank() } ?: "Android Phone"
-        ApiClient.registerDevice("Phone-$name") { result ->
-            runOnUiThread {
-                result.onSuccess { resp ->
-                    DeviceShareService.saveDevice(
-                        this, resp.device_token, resp.device.id, resp.device.device_name
-                    )
-                    Toast.makeText(this, "注册成功", Toast.LENGTH_SHORT).show()
-                    updateShareUi()
-                    loadDevices()
-                }.onFailure {
-                    Toast.makeText(this, "注册失败: ${it.message}", Toast.LENGTH_LONG).show()
-                }
-            }
-        }
-    }
-
-    private fun toggleSharing() {
-        if (DeviceShareService.isSharing(this)) {
-            DeviceShareService.stop(this)
-            Toast.makeText(this, "已停止分享", Toast.LENGTH_SHORT).show()
-            tvShareStatus.postDelayed({ updateShareUi() }, 400)
-            return
-        }
-        ensurePermissionsThenShare()
-    }
-
-    private fun ensurePermissionsThenShare() {
+    private fun ensureLocationPermission() {
         val need = mutableListOf<String>()
         if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION)
             != PackageManager.PERMISSION_GRANTED
@@ -315,19 +254,30 @@ class DeviceListActivity : AppCompatActivity() {
             != PackageManager.PERMISSION_GRANTED
         ) need.add(Manifest.permission.POST_NOTIFICATIONS)
         if (need.isNotEmpty()) permissionLauncher.launch(need.toTypedArray())
-        else startSharingIfReady()
     }
 
-    private fun startSharingIfReady() {
-        if (DeviceShareService.getSavedDeviceToken(this).isNullOrBlank()) {
-            Toast.makeText(this, "请先注册本机", Toast.LENGTH_SHORT).show()
-            return
+    private fun registerThisDevice() {
+        val name = Build.MODEL?.takeIf { it.isNotBlank() } ?: "Android Phone"
+        ApiClient.registerDevice("Phone-$name") { result ->
+            runOnUiThread {
+                result.onSuccess { resp ->
+                    DeviceShareService.saveDevice(
+                        this, resp.device_token, resp.device.id, resp.device.device_name
+                    )
+                    ensureLocationPermission()
+                    DeviceShareService.ensureRunning(this)
+                    Toast.makeText(this, "注册成功，已启动连接", Toast.LENGTH_SHORT).show()
+                    updateShareUi()
+                    loadDevices()
+                }.onFailure {
+                    Toast.makeText(this, "注册失败: ${it.message}", Toast.LENGTH_LONG).show()
+                }
+            }
         }
-        DeviceShareService.start(this)
-        Toast.makeText(this, "已开始分享", Toast.LENGTH_SHORT).show()
-        tvShareStatus.postDelayed({ updateShareUi() }, 500)
-        tvShareStatus.postDelayed({ loadDevices() }, 2000)
     }
+
+
+
 
     private fun loadDevices() {
         ApiClient.listDevices { result ->

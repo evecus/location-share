@@ -14,7 +14,7 @@
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="本机位置分享"
+        android:text="本机设备"
         android:textSize="20sp"
         android:textStyle="bold"
         android:textColor="@color/text_primary"
@@ -24,36 +24,20 @@
         android:id="@+id/tvShareStatus"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="未注册本机设备"
+        android:text="未注册本机。注册后将自动保持轻量连接。"
         android:textSize="14sp"
         android:textColor="@color/text_primary"
         android:padding="10dp"
         android:background="@color/surface"
         android:layout_marginBottom="8dp" />
 
-    <LinearLayout
+    <Button
+        android:id="@+id/btnRegisterDevice"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal">
-        <Button
-            android:id="@+id/btnRegisterDevice"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_weight="1"
-            android:text="注册本机"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="@color/primary"
-            android:layout_marginEnd="6dp" />
-        <Button
-            android:id="@+id/btnToggleShare"
-            android:layout_width="0dp"
-            android:layout_height="48dp"
-            android:layout_weight="1"
-            android:text="开始分享"
-            android:textColor="#FFFFFF"
-            android:backgroundTint="@color/accent"
-            android:layout_marginStart="6dp" />
-    </LinearLayout>
+        android:layout_height="48dp"
+        android:text="注册本机"
+        android:textColor="#FFFFFF"
+        android:backgroundTint="@color/primary" />
 
     <View
         android:layout_width="match_parent"
