@@ -11,7 +11,14 @@ data class Device(
     val online: Boolean = false
 )
 
-data class DevicesResponse(val devices: List<Device>)
+data class DevicesResponse(val devices: List<Device>?)
+
+data class RegisterDeviceRequest(val device_name: String)
+data class RegisterDeviceResponse(
+    val device: Device,
+    val device_token: String,
+    val note: String? = null
+)
 
 data class LocationRequest(val device_id: Long)
 data class LocationRequestResponse(
@@ -27,5 +34,12 @@ data class LocationMsg(
     val lon: Double,
     val accuracy: Double,
     val timestamp: Long,
+    val request_id: String? = null
+)
+
+/** Incoming command from server to device */
+data class DeviceCommand(
+    val type: String,
+    val device_id: String? = null,
     val request_id: String? = null
 )

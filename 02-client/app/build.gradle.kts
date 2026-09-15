@@ -11,8 +11,8 @@ android {
         applicationId = "com.locationshare.client"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0.0"
+        versionCode = 3
+        versionName = "1.2.0"
     }
 
     buildTypes {
@@ -46,4 +46,10 @@ dependencies {
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("com.google.code.gson:gson:2.10.1")
+    // 本机 GPS
+    implementation("com.google.android.gms:play-services-location:21.1.0")
+    // Activity Result API
+    implementation("androidx.activity:activity-ktx:1.8.2")
+    // 地图（OpenStreetMap，无需 Google API Key）
+    implementation("org.osmdroid:osmdroid-android:6.1.18")
 }

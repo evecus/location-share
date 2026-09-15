@@ -95,6 +95,31 @@ object ApiClient {
         })
     }
 
+    fun registerDevice(deviceName: String, cb: (Result<RegisterDeviceResponse>) -> Unit) {
+        val t = token ?: return cb(Result.failure(IOException("not logged in")))
+        val body = gson.toJson(RegisterDeviceRequest(deviceName)).toRequestBody(json)
+        val req = Request.Builder()
+            .url("$baseUrl/api/devices")
+            .header("Authorization", "Bearer $t")
+            .post(body)
+            .build()
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = cb(Result.failure(e))
+            override fun onResponse(call: Call, response: Response) {
+                val str = response.body?.string() ?: ""
+                if (!response.isSuccessful) {
+                    cb(Result.failure(IOException("HTTP ${response.code}: $str")))
+                    return
+                }
+                try {
+                    cb(Result.success(gson.fromJson(str, RegisterDeviceResponse::class.java)))
+                } catch (e: Exception) {
+                    cb(Result.failure(e))
+                }
+            }
+        })
+    }
+
     fun requestLocation(deviceId: Long, cb: (Result<LocationRequestResponse>) -> Unit) {
         val t = token ?: return cb(Result.failure(IOException("not logged in")))
         val body = gson.toJson(LocationRequest(deviceId)).toRequestBody(json)
@@ -125,5 +150,11 @@ object ApiClient {
         val http = baseUrl.removePrefix("http://").removePrefix("https://")
         val scheme = if (baseUrl.startsWith("https")) "wss" else "ws"
         return "$scheme://$http/ws?token=$t"
+    }
+
+    fun deviceWsUrl(deviceToken: String): String {
+        val http = baseUrl.removePrefix("http://").removePrefix("https://")
+        val scheme = if (baseUrl.startsWith("https")) "wss" else "ws"
+        return "$scheme://$http/ws?device_token=${java.net.URLEncoder.encode(deviceToken, "UTF-8")}"
     }
 }

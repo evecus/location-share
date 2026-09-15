@@ -72,14 +72,14 @@ class LoginActivity : AppCompatActivity() {
             applyServer()
             val u = etUser.text.toString().trim()
             val p = etPass.text.toString()
-            if (u.length < 3 || p.length < 6) {
-                Toast.makeText(this, "用户名≥3 密码≥6", Toast.LENGTH_SHORT).show()
+            if (u.isEmpty() || p.isEmpty()) {
+                Toast.makeText(this, "请输入账号密码", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             ApiClient.register(u, p) { result ->
                 runOnUiThread {
                     result.onSuccess {
-                        Toast.makeText(this, "注册成功", Toast.LENGTH_SHORT).show()
+                        Toast.makeText(this, "注册成功，已自动登录", Toast.LENGTH_SHORT).show()
                         startActivity(Intent(this, DeviceListActivity::class.java))
                         finish()
                     }.onFailure {
