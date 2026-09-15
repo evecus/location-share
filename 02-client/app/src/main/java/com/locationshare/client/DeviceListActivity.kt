@@ -212,9 +212,36 @@ class DeviceListActivity : AppCompatActivity() {
     override fun onResume() {
         super.onResume()
         mapView.onResume()
+        // 强杀后 prefs 可能仍是「想分享」，但服务已死 → 自动恢复连接
+        reconcileSharingState()
         updateShareUi()
         loadDevices()
         loadIncoming()
+    }
+
+    /**
+     * 校正分享状态：
+     * - 服务未在跑但用户曾开启分享 → 自动重新 start（恢复上线）
+     * - 服务未在跑 → UI 显示未分享，避免假「正在分享」
+     */
+    private fun reconcileSharingState() {
+        val wants = DeviceShareService.wantsSharing(this)
+        val alive = DeviceShareService.isServiceProcessRunning()
+        if (wants && !alive) {
+            val token = DeviceShareService.getSavedDeviceToken(this)
+            if (!token.isNullOrBlank()) {
+                // 有 token 则尝试恢复分享（权限已有时才会真正连上）
+                DeviceShareService.start(this)
+                Toast.makeText(this, "已恢复位置分享连接…", Toast.LENGTH_SHORT).show()
+                // 稍后再刷新在线状态
+                tvShareStatus.postDelayed({
+                    updateShareUi()
+                    loadDevices()
+                }, 2000)
+            } else {
+                DeviceShareService.setSharing(this, false)
+            }
+        }
     }
 
     override fun onPause() {
@@ -227,16 +254,22 @@ class DeviceListActivity : AppCompatActivity() {
         val token = prefs.getString(DeviceShareService.KEY_DEVICE_TOKEN, null)
         val name = prefs.getString(DeviceShareService.KEY_DEVICE_NAME, null)
         val id = prefs.getLong(DeviceShareService.KEY_DEVICE_ID, 0)
-        val sharing = DeviceShareService.isSharing(this)
+        val sharing = DeviceShareService.isSharing(this) // 服务是否真在跑
+        val wants = DeviceShareService.wantsSharing(this)
         if (token.isNullOrBlank()) {
             tvShareStatus.text = "未注册本机。注册并开始分享后，别人才能向你申请看位置。"
             btnToggleShare.isEnabled = false
             btnToggleShare.text = "开始分享"
         } else {
-            val status = if (sharing) "🟢 正在分享" else "⚫ 已注册未分享"
+            val status = when {
+                sharing -> "🟢 正在分享（已连接服务器）"
+                wants -> "🟡 分享已中断（进程被杀），正在尝试恢复…"
+                else -> "⚫ 已注册未分享"
+            }
             tvShareStatus.text = "$status\n$name (id=$id)"
             btnRegisterDevice.text = "重新注册"
             btnToggleShare.isEnabled = true
+            // 服务在跑 → 显示停止；否则显示开始（即使 prefs 残留）
             btnToggleShare.text = if (sharing) "停止分享" else "开始分享"
         }
     }

@@ -51,7 +51,22 @@ class DeviceShareService : Service() {
         const val ACTION_START = "com.locationshare.client.START_SHARE"
         const val ACTION_STOP = "com.locationshare.client.STOP_SHARE"
 
+        /** 当前进程内服务是否真的在跑（强杀后为 false） */
+        @JvmStatic
+        val processRunning = AtomicBoolean(false)
+
+        fun isServiceProcessRunning(): Boolean = processRunning.get()
+
+        /**
+         * UI 用的「是否在分享」：必须以服务实际在跑为准。
+         * 仅 prefs 为 true 但进程已死时，返回 false，避免假「正在分享」。
+         */
         fun isSharing(ctx: Context): Boolean {
+            return processRunning.get()
+        }
+
+        /** 用户是否希望保持分享（用于进程被杀后自动恢复） */
+        fun wantsSharing(ctx: Context): Boolean {
             return ctx.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
                 .getBoolean(KEY_SHARING, false)
         }
@@ -135,6 +150,7 @@ class DeviceShareService : Service() {
                 }
                 startForeground(NOTIF_ID, buildNotification("正在连接…"))
                 setSharing(this, true)
+                processRunning.set(true)
                 if (running.compareAndSet(false, true)) {
                     startLocationUpdates()
                     connectDeviceWs(token)
@@ -146,6 +162,7 @@ class DeviceShareService : Service() {
 
     private fun stopSharing() {
         running.set(false)
+        processRunning.set(false)
         setSharing(this, false)
         stopLocationUpdates()
         webSocket?.close(1000, "stop")
@@ -154,7 +171,12 @@ class DeviceShareService : Service() {
     }
 
     override fun onDestroy() {
-        stopSharing()
+        // 正常销毁时清理；强杀时 onDestroy 可能不走，processRunning 会随进程一起消失
+        running.set(false)
+        processRunning.set(false)
+        stopLocationUpdates()
+        webSocket?.close(1000, "destroy")
+        webSocket = null
         super.onDestroy()
     }
 
