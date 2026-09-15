@@ -9,88 +9,94 @@
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
     android:orientation="vertical"
-    android:padding="28dp"
-    android:gravity="center_horizontal">
+    android:padding="24dp">
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="📍"
-        android:textSize="48sp"
-        android:layout_marginTop="32dp"
+        android:text="Location Share"
+        android:textSize="24sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary"
         android:layout_marginBottom="8dp" />
 
     <TextView
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
-        android:text="位置共享"
-        android:textSize="26sp"
-        android:textStyle="bold"
-        android:textColor="@color/text_primary"
-        android:layout_marginBottom="4dp" />
-
-    <TextView
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:text="实时位置 · 不保存历史"
-        android:textSize="14sp"
-        android:textColor="@color/text_secondary"
-        android:layout_marginBottom="28dp" />
-
-    <TextView
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
         android:text="服务器地址"
-        android:textSize="12sp"
+        android:textSize="13sp"
         android:textColor="@color/text_secondary" />
 
     <EditText
         android:id="@+id/etServer"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
-        android:hint="http://192.168.1.10:8080"
+        android:layout_height="48dp"
+        android:hint="http://10.0.2.2:8080"
         android:inputType="textUri"
-        android:paddingHorizontal="16dp"
+        android:singleLine="true"
+        android:background="@color/surface"
+        android:padding="12dp"
         android:layout_marginTop="4dp"
-        android:background="@android:drawable/edit_text"
+        android:layout_marginBottom="12dp"
         android:textColor="@color/text_primary" />
 
     <TextView
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="用户名"
-        android:textSize="12sp"
-        android:textColor="@color/text_secondary"
-        android:layout_marginTop="12dp" />
+        android:textSize="13sp"
+        android:textColor="@color/text_secondary" />
 
     <EditText
         android:id="@+id/etUsername"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="48dp"
         android:hint="用户名"
         android:inputType="text"
-        android:paddingHorizontal="16dp"
+        android:singleLine="true"
+        android:background="@color/surface"
+        android:padding="12dp"
         android:layout_marginTop="4dp"
-        android:background="@android:drawable/edit_text"
+        android:layout_marginBottom="12dp"
         android:textColor="@color/text_primary" />
 
     <TextView
-        android:layout_width="match_parent"
+        android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:text="密码"
-        android:textSize="12sp"
-        android:textColor="@color/text_secondary"
-        android:layout_marginTop="12dp" />
+        android:textSize="13sp"
+        android:textColor="@color/text_secondary" />
 
     <EditText
         android:id="@+id/etPassword"
         android:layout_width="match_parent"
-        android:layout_height="52dp"
+        android:layout_height="48dp"
         android:hint="密码"
         android:inputType="textPassword"
-        android:paddingHorizontal="16dp"
+        android:singleLine="true"
+        android:background="@color/surface"
+        android:padding="12dp"
         android:layout_marginTop="4dp"
-        android:background="@android:drawable/edit_text"
+        android:layout_marginBottom="12dp"
+        android:textColor="@color/text_primary" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="注册密钥（仅注册需要）"
+        android:textSize="13sp"
+        android:textColor="@color/text_secondary" />
+
+    <EditText
+        android:id="@+id/etRegKey"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:hint="与服务器 REGISTRATION_KEY 一致"
+        android:inputType="textPassword"
+        android:singleLine="true"
+        android:background="@color/surface"
+        android:padding="12dp"
+        android:layout_marginTop="4dp"
         android:textColor="@color/text_primary" />
 
     <Button

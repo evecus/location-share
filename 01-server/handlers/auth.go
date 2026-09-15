@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"net/http"
+	"os"
 	"strings"
 
 	"location-share-server/auth"
@@ -12,8 +13,9 @@ import (
 )
 
 type registerReq struct {
-	Username string `json:"username" binding:"required,min=3,max=32"`
-	Password string `json:"password" binding:"required,min=6"`
+	Username         string `json:"username" binding:"required,min=3,max=32"`
+	Password         string `json:"password" binding:"required,min=6"`
+	RegistrationKey  string `json:"registration_key"`
 }
 
 type loginReq struct {
@@ -27,6 +29,21 @@ func Register(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
 	}
+
+	// 注册密钥：从环境变量读取（REGISTRATION_KEY 或 registration-key）
+	expected := strings.TrimSpace(os.Getenv("REGISTRATION_KEY"))
+	if expected == "" {
+		expected = strings.TrimSpace(os.Getenv("registration-key"))
+	}
+	if expected == "" {
+		c.JSON(http.StatusForbidden, gin.H{"error": "registration disabled: set REGISTRATION_KEY on server"})
+		return
+	}
+	if strings.TrimSpace(req.RegistrationKey) != expected {
+		c.JSON(http.StatusForbidden, gin.H{"error": "invalid registration key"})
+		return
+	}
+
 	existing, _ := db.GetUserByUsername(req.Username)
 	if existing != nil {
 		c.JSON(http.StatusConflict, gin.H{"error": "username already exists"})

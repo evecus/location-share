@@ -2,6 +2,7 @@ package com.locationshare.client
 
 import android.Manifest
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.Color
 import android.os.Build
@@ -65,6 +66,7 @@ class DeviceListActivity : AppCompatActivity() {
         btnToggleShare = findViewById(R.id.btnToggleShare)
         mapView = findViewById(R.id.mapView)
         val btnRefresh = findViewById<Button>(R.id.btnRefresh)
+        val btnLogout = findViewById<Button>(R.id.btnLogout)
         val btnAccept = findViewById<Button>(R.id.btnAccept)
         val btnDeny = findViewById<Button>(R.id.btnDeny)
 
@@ -79,6 +81,15 @@ class DeviceListActivity : AppCompatActivity() {
         btnRefresh.setOnClickListener {
             loadDevices()
             loadIncoming()
+        }
+        btnLogout.setOnClickListener {
+            // 停止本机分享
+            if (DeviceShareService.isSharing(this)) {
+                DeviceShareService.stop(this)
+            }
+            LoginActivity.clearSession(this)
+            startActivity(Intent(this, LoginActivity::class.java))
+            finish()
         }
         btnAccept.setOnClickListener { respondFirst(true) }
         btnDeny.setOnClickListener { respondFirst(false) }

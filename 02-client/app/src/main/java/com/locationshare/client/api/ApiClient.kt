@@ -41,8 +41,8 @@ object ApiClient {
         })
     }
 
-    fun register(username: String, password: String, cb: (Result<LoginResponse>) -> Unit) {
-        val body = gson.toJson(LoginRequest(username, password)).toRequestBody(json)
+    fun register(username: String, password: String, registrationKey: String, cb: (Result<LoginResponse>) -> Unit) {
+        val body = gson.toJson(RegisterRequest(username, password, registrationKey)).toRequestBody(json)
         val req = Request.Builder().url("$baseUrl/api/register").post(body).build()
         client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = cb(Result.failure(e))

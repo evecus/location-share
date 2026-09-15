@@ -1,6 +1,7 @@
 package com.locationshare.client.api
 
 data class LoginRequest(val username: String, val password: String)
+data class RegisterRequest(val username: String, val password: String, val registration_key: String)
 data class LoginResponse(val user: User, val token: String)
 data class User(val id: Long, val username: String)
 
