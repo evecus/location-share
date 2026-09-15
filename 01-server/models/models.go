@@ -16,6 +16,10 @@ type Device struct {
 	DeviceName  string    `json:"device_name"`
 	CreatedAt   time.Time `json:"created_at"`
 	Online      bool      `json:"online,omitempty"`
+	// 列表扩展字段（非表字段）
+	OwnerUsername string `json:"owner_username,omitempty"`
+	// access: owner | allowed | pending | none
+	Access string `json:"access,omitempty"`
 }
 
 type Permission struct {
@@ -24,6 +28,9 @@ type Permission struct {
 	TargetDeviceID  int64     `json:"target_device_id"`
 	Allowed         bool      `json:"allowed"`
 	CreatedAt       time.Time `json:"created_at"`
+	// 扩展
+	RequesterUsername string `json:"requester_username,omitempty"`
+	DeviceName        string `json:"device_name,omitempty"`
 }
 
 type LocationMsg struct {
@@ -33,6 +40,7 @@ type LocationMsg struct {
 	Lon       float64 `json:"lon"`
 	Accuracy  float64 `json:"accuracy"`
 	Timestamp int64   `json:"timestamp"`
+	RequestID string  `json:"request_id,omitempty"`
 }
 
 type CommandMsg struct {

@@ -8,7 +8,10 @@ data class Device(
     val id: Long,
     val user_id: Long,
     val device_name: String,
-    val online: Boolean = false
+    val online: Boolean = false,
+    val owner_username: String? = null,
+    /** owner | allowed | pending | none */
+    val access: String? = null
 )
 
 data class DevicesResponse(val devices: List<Device>?)
@@ -37,9 +40,22 @@ data class LocationMsg(
     val request_id: String? = null
 )
 
-/** Incoming command from server to device */
 data class DeviceCommand(
     val type: String,
     val device_id: String? = null,
     val request_id: String? = null
 )
+
+data class PermissionRequestBody(val device_id: Long)
+data class PermissionRespondBody(val permission_id: Long, val accept: Boolean)
+
+data class IncomingPermission(
+    val id: Long,
+    val requester_user_id: Long,
+    val target_device_id: Long,
+    val allowed: Boolean = false,
+    val requester_username: String? = null,
+    val device_name: String? = null
+)
+
+data class IncomingPermissionsResponse(val requests: List<IncomingPermission>?)

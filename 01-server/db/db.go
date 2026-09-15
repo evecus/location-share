@@ -334,3 +334,156 @@ func ListDevicesAccessible(userID int64) ([]models.Device, error) {
 func DeviceIDToString(id int64) string {
 	return fmt.Sprintf("%d", id)
 }
+
+// GetPermissionStatus returns: none | pending | allowed
+func GetPermissionStatus(requesterUserID, targetDeviceID int64) (string, error) {
+	if isPostgres() {
+		var allowed bool
+		err := DB.QueryRow(`SELECT allowed FROM permissions WHERE requester_user_id = $1 AND target_device_id = $2`, requesterUserID, targetDeviceID).Scan(&allowed)
+		if err == sql.ErrNoRows {
+			return "none", nil
+		}
+		if err != nil {
+			return "none", err
+		}
+		if allowed {
+			return "allowed", nil
+		}
+		return "pending", nil
+	}
+	var a int
+	err := DB.QueryRow(`SELECT allowed FROM permissions WHERE requester_user_id = ? AND target_device_id = ?`, requesterUserID, targetDeviceID).Scan(&a)
+	if err == sql.ErrNoRows {
+		return "none", nil
+	}
+	if err != nil {
+		return "none", err
+	}
+	if a == 1 {
+		return "allowed", nil
+	}
+	return "pending", nil
+}
+
+// RequestPermission creates a pending row (allowed=0). Does not downgrade existing allowed.
+func RequestPermission(requesterUserID, targetDeviceID int64) error {
+	st, err := GetPermissionStatus(requesterUserID, targetDeviceID)
+	if err != nil {
+		return err
+	}
+	if st == "allowed" || st == "pending" {
+		return nil
+	}
+	if isPostgres() {
+		_, err = DB.Exec(`INSERT INTO permissions (requester_user_id, target_device_id, allowed) VALUES ($1, $2, FALSE) ON CONFLICT (requester_user_id, target_device_id) DO NOTHING`, requesterUserID, targetDeviceID)
+		return err
+	}
+	_, err = DB.Exec(`INSERT INTO permissions (requester_user_id, target_device_id, allowed) VALUES (?, ?, 0) ON CONFLICT(requester_user_id, target_device_id) DO NOTHING`, requesterUserID, targetDeviceID)
+	return err
+}
+
+// ListPendingForOwner returns pending requests targeting devices owned by ownerUserID
+func ListPendingForOwner(ownerUserID int64) ([]models.Permission, error) {
+	var q string
+	if isPostgres() {
+		q = `SELECT p.id, p.requester_user_id, p.target_device_id, p.allowed, p.created_at,
+			u.username, d.device_name
+			FROM permissions p
+			JOIN devices d ON d.id = p.target_device_id
+			JOIN users u ON u.id = p.requester_user_id
+			WHERE d.user_id = $1 AND p.allowed = FALSE
+			ORDER BY p.created_at DESC`
+	} else {
+		q = `SELECT p.id, p.requester_user_id, p.target_device_id, p.allowed, p.created_at,
+			u.username, d.device_name
+			FROM permissions p
+			JOIN devices d ON d.id = p.target_device_id
+			JOIN users u ON u.id = p.requester_user_id
+			WHERE d.user_id = ? AND p.allowed = 0
+			ORDER BY p.created_at DESC`
+	}
+	rows, err := DB.Query(q, ownerUserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []models.Permission
+	for rows.Next() {
+		var p models.Permission
+		if isPostgres() {
+			if err := rows.Scan(&p.ID, &p.RequesterUserID, &p.TargetDeviceID, &p.Allowed, &p.CreatedAt, &p.RequesterUsername, &p.DeviceName); err != nil {
+				return nil, err
+			}
+		} else {
+			var a int
+			if err := rows.Scan(&p.ID, &p.RequesterUserID, &p.TargetDeviceID, &a, &p.CreatedAt, &p.RequesterUsername, &p.DeviceName); err != nil {
+				return nil, err
+			}
+			p.Allowed = a == 1
+		}
+		list = append(list, p)
+	}
+	return list, nil
+}
+
+// RespondPermission: owner accepts or denies a pending request
+func RespondPermission(ownerUserID, permissionID int64, accept bool) error {
+	// verify ownership
+	var q string
+	if isPostgres() {
+		q = `SELECT p.id, p.requester_user_id, p.target_device_id, d.user_id
+			FROM permissions p JOIN devices d ON d.id = p.target_device_id
+			WHERE p.id = $1`
+	} else {
+		q = `SELECT p.id, p.requester_user_id, p.target_device_id, d.user_id
+			FROM permissions p JOIN devices d ON d.id = p.target_device_id
+			WHERE p.id = ?`
+	}
+	var pid, requesterID, deviceID, ownerID int64
+	err := DB.QueryRow(q, permissionID).Scan(&pid, &requesterID, &deviceID, &ownerID)
+	if err == sql.ErrNoRows {
+		return fmt.Errorf("permission not found")
+	}
+	if err != nil {
+		return err
+	}
+	if ownerID != ownerUserID {
+		return fmt.Errorf("only device owner can respond")
+	}
+	if accept {
+		return GrantPermission(requesterID, deviceID)
+	}
+	// deny: delete row
+	if isPostgres() {
+		_, err = DB.Exec(`DELETE FROM permissions WHERE id = $1`, permissionID)
+	} else {
+		_, err = DB.Exec(`DELETE FROM permissions WHERE id = ?`, permissionID)
+	}
+	return err
+}
+
+// ListAllDevices returns every device with owner username (for discovery in client)
+func ListAllDevices() ([]models.Device, error) {
+	var q string
+	if isPostgres() {
+		q = `SELECT d.id, d.user_id, d.device_name, d.created_at, u.username
+			FROM devices d JOIN users u ON u.id = d.user_id ORDER BY d.id`
+	} else {
+		q = `SELECT d.id, d.user_id, d.device_name, d.created_at, u.username
+			FROM devices d JOIN users u ON u.id = d.user_id ORDER BY d.id`
+	}
+	rows, err := DB.Query(q)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var list []models.Device
+	for rows.Next() {
+		var d models.Device
+		if err := rows.Scan(&d.ID, &d.UserID, &d.DeviceName, &d.CreatedAt, &d.OwnerUsername); err != nil {
+			return nil, err
+		}
+		list = append(list, d)
+	}
+	return list, nil
+}

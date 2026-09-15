@@ -8,7 +8,6 @@ import java.io.IOException
 import java.util.concurrent.TimeUnit
 
 object ApiClient {
-    // 模拟器访问宿主机用 10.0.2.2；真机请改成服务器局域网 IP 或 https 域名
     var baseUrl = "http://10.0.2.2:8080"
     var token: String? = null
 
@@ -22,10 +21,7 @@ object ApiClient {
 
     fun login(username: String, password: String, cb: (Result<LoginResponse>) -> Unit) {
         val body = gson.toJson(LoginRequest(username, password)).toRequestBody(json)
-        val req = Request.Builder()
-            .url("$baseUrl/api/login")
-            .post(body)
-            .build()
+        val req = Request.Builder().url("$baseUrl/api/login").post(body).build()
         client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = cb(Result.failure(e))
             override fun onResponse(call: Call, response: Response) {
@@ -47,10 +43,7 @@ object ApiClient {
 
     fun register(username: String, password: String, cb: (Result<LoginResponse>) -> Unit) {
         val body = gson.toJson(LoginRequest(username, password)).toRequestBody(json)
-        val req = Request.Builder()
-            .url("$baseUrl/api/register")
-            .post(body)
-            .build()
+        val req = Request.Builder().url("$baseUrl/api/register").post(body).build()
         client.newCall(req).enqueue(object : Callback {
             override fun onFailure(call: Call, e: IOException) = cb(Result.failure(e))
             override fun onResponse(call: Call, response: Response) {
@@ -141,6 +134,73 @@ object ApiClient {
                 } catch (e: Exception) {
                     cb(Result.failure(e))
                 }
+            }
+        })
+    }
+
+    fun requestPermission(deviceId: Long, cb: (Result<String>) -> Unit) {
+        val t = token ?: return cb(Result.failure(IOException("not logged in")))
+        val body = gson.toJson(PermissionRequestBody(deviceId)).toRequestBody(json)
+        val req = Request.Builder()
+            .url("$baseUrl/api/permissions/request")
+            .header("Authorization", "Bearer $t")
+            .post(body)
+            .build()
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = cb(Result.failure(e))
+            override fun onResponse(call: Call, response: Response) {
+                val str = response.body?.string() ?: ""
+                if (!response.isSuccessful) {
+                    cb(Result.failure(IOException("HTTP ${response.code}: $str")))
+                    return
+                }
+                cb(Result.success(str))
+            }
+        })
+    }
+
+    fun listIncomingPermissions(cb: (Result<List<IncomingPermission>>) -> Unit) {
+        val t = token ?: return cb(Result.failure(IOException("not logged in")))
+        val req = Request.Builder()
+            .url("$baseUrl/api/permissions/incoming")
+            .header("Authorization", "Bearer $t")
+            .get()
+            .build()
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = cb(Result.failure(e))
+            override fun onResponse(call: Call, response: Response) {
+                val str = response.body?.string() ?: ""
+                if (!response.isSuccessful) {
+                    cb(Result.failure(IOException("HTTP ${response.code}: $str")))
+                    return
+                }
+                try {
+                    val r = gson.fromJson(str, IncomingPermissionsResponse::class.java)
+                    cb(Result.success(r.requests ?: emptyList()))
+                } catch (e: Exception) {
+                    cb(Result.failure(e))
+                }
+            }
+        })
+    }
+
+    fun respondPermission(permissionId: Long, accept: Boolean, cb: (Result<String>) -> Unit) {
+        val t = token ?: return cb(Result.failure(IOException("not logged in")))
+        val body = gson.toJson(PermissionRespondBody(permissionId, accept)).toRequestBody(json)
+        val req = Request.Builder()
+            .url("$baseUrl/api/permissions/respond")
+            .header("Authorization", "Bearer $t")
+            .post(body)
+            .build()
+        client.newCall(req).enqueue(object : Callback {
+            override fun onFailure(call: Call, e: IOException) = cb(Result.failure(e))
+            override fun onResponse(call: Call, response: Response) {
+                val str = response.body?.string() ?: ""
+                if (!response.isSuccessful) {
+                    cb(Result.failure(IOException("HTTP ${response.code}: $str")))
+                    return
+                }
+                cb(Result.success(str))
             }
         })
     }

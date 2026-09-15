@@ -39,9 +39,10 @@ func RegisterDevice(c *gin.Context) {
 	})
 }
 
+// ListDevices: 登录用户可见全部已注册设备，并标注 access / online
 func ListDevices(c *gin.Context) {
 	userID := c.GetInt64("user_id")
-	list, err := db.ListDevicesAccessible(userID)
+	list, err := db.ListAllDevices()
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
@@ -49,6 +50,12 @@ func ListDevices(c *gin.Context) {
 	hub := ws.GetHub()
 	for i := range list {
 		list[i].Online = hub != nil && hub.IsDeviceOnline(list[i].ID)
+		if list[i].UserID == userID {
+			list[i].Access = "owner"
+			continue
+		}
+		st, _ := db.GetPermissionStatus(userID, list[i].ID)
+		list[i].Access = st // none | pending | allowed
 	}
 	c.JSON(http.StatusOK, gin.H{"devices": list})
 }
