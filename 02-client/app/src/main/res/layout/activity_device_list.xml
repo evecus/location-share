@@ -1,0 +1,188 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:fillViewport="true"
+    android:background="@color/background">
+
+<LinearLayout
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:padding="16dp">
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="本机位置分享"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary"
+        android:layout_marginBottom="4dp" />
+
+    <TextView
+        android:id="@+id/tvShareStatus"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="未注册本机设备"
+        android:textSize="14sp"
+        android:textColor="@color/text_primary"
+        android:padding="10dp"
+        android:background="@color/surface"
+        android:layout_marginBottom="8dp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal">
+        <Button
+            android:id="@+id/btnRegisterDevice"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="注册本机"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="@color/primary"
+            android:layout_marginEnd="6dp" />
+        <Button
+            android:id="@+id/btnToggleShare"
+            android:layout_width="0dp"
+            android:layout_height="48dp"
+            android:layout_weight="1"
+            android:text="开始分享"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="@color/accent"
+            android:layout_marginStart="6dp" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#E0E0E0"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="12dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="待处理授权请求"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary" />
+
+    <TextView
+        android:id="@+id/tvIncoming"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="暂无"
+        android:textSize="13sp"
+        android:textColor="@color/text_secondary"
+        android:padding="8dp"
+        android:layout_marginTop="4dp"
+        android:background="@color/surface" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:layout_marginTop="6dp">
+        <Button
+            android:id="@+id/btnAccept"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:text="同意第一条"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="@color/accent"
+            android:layout_marginEnd="6dp" />
+        <Button
+            android:id="@+id/btnDeny"
+            android:layout_width="0dp"
+            android:layout_height="44dp"
+            android:layout_weight="1"
+            android:text="拒绝第一条"
+            android:textColor="#FFFFFF"
+            android:backgroundTint="#EA4335"
+            android:layout_marginStart="6dp" />
+    </LinearLayout>
+
+    <View
+        android:layout_width="match_parent"
+        android:layout_height="1dp"
+        android:background="#E0E0E0"
+        android:layout_marginTop="16dp"
+        android:layout_marginBottom="12dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="全部设备"
+        android:textSize="20sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="无权限点「请求授权」；已授权且在线点一下可看位置"
+        android:textSize="12sp"
+        android:textColor="@color/text_secondary"
+        android:layout_marginBottom="8dp" />
+
+    <ListView
+        android:id="@+id/listDevices"
+        android:layout_width="match_parent"
+        android:layout_height="200dp"
+        android:dividerHeight="8dp"
+        android:divider="@android:color/transparent"
+        android:nestedScrollingEnabled="true" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="最新位置"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary"
+        android:layout_marginTop="12dp" />
+
+    <TextView
+        android:id="@+id/tvLocation"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="等待位置数据…"
+        android:textSize="14sp"
+        android:textColor="@color/text_secondary"
+        android:padding="12dp"
+        android:layout_marginTop="6dp"
+        android:background="@color/surface"
+        android:minHeight="72dp" />
+
+    <TextView
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:text="地图"
+        android:textSize="16sp"
+        android:textStyle="bold"
+        android:textColor="@color/text_primary"
+        android:layout_marginTop="12dp" />
+
+    <org.osmdroid.views.MapView
+        android:id="@+id/mapView"
+        android:layout_width="match_parent"
+        android:layout_height="280dp"
+        android:layout_marginTop="6dp"
+        android:background="@color/surface"
+        android:clickable="true"
+        android:focusable="true" />
+
+    <Button
+        android:id="@+id/btnRefresh"
+        android:layout_width="match_parent"
+        android:layout_height="48dp"
+        android:text="刷新列表 / 授权请求"
+        android:textColor="@color/primary"
+        android:backgroundTint="@color/surface"
+        android:layout_marginTop="12dp" />
+</LinearLayout>
+</ScrollView>
