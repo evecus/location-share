@@ -36,7 +36,7 @@ func main() {
 		auth.GET("/devices", handlers.ListDevices)
 		auth.POST("/permissions", handlers.GrantPermission)
 		auth.GET("/permissions", handlers.ListPermissions)
-		// 新：App 内授权流程
+		// App 内授权流程
 		auth.POST("/permissions/request", handlers.RequestPermission)
 		auth.GET("/permissions/incoming", handlers.ListIncomingPermissions)
 		auth.POST("/permissions/respond", handlers.RespondPermission)
