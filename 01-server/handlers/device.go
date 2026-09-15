@@ -13,6 +13,8 @@ import (
 
 type registerDeviceReq struct {
 	DeviceName string `json:"device_name" binding:"required,min=1,max=64"`
+	// ReplaceExisting: 默认 true，同一账号只保留一台可分享设备，避免重复注册堆积
+	ReplaceExisting *bool `json:"replace_existing"`
 }
 
 func RegisterDevice(c *gin.Context) {
@@ -21,6 +23,14 @@ func RegisterDevice(c *gin.Context) {
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
 		return
+	}
+	replace := true
+	if req.ReplaceExisting != nil {
+		replace = *req.ReplaceExisting
+	}
+	if replace {
+		// 删除该用户旧设备（级联清理相关 permissions）
+		_ = db.DeleteDevicesByUser(userID)
 	}
 	token, err := generateDeviceToken()
 	if err != nil {
@@ -35,11 +45,10 @@ func RegisterDevice(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"device":       dev,
 		"device_token": token,
-		"note":         "Save device_token securely. It is shown only once.",
+		"note":         "Save device_token securely. It is shown only once. Previous devices of this account were replaced.",
 	})
 }
 
-// ListDevices: 登录用户可见全部已注册设备，并标注 access / online
 func ListDevices(c *gin.Context) {
 	userID := c.GetInt64("user_id")
 	list, err := db.ListAllDevices()
@@ -55,7 +64,7 @@ func ListDevices(c *gin.Context) {
 			continue
 		}
 		st, _ := db.GetPermissionStatus(userID, list[i].ID)
-		list[i].Access = st // none | pending | allowed
+		list[i].Access = st
 	}
 	c.JSON(http.StatusOK, gin.H{"devices": list})
 }
