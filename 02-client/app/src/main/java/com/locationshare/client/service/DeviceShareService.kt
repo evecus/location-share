@@ -10,16 +10,18 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Build
+import android.os.Bundle
+import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
 import android.util.Log
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
-import com.google.android.gms.location.*
 import com.google.gson.Gson
 import com.locationshare.client.DeviceListActivity
-import com.locationshare.client.R
 import com.locationshare.client.api.ApiClient
 import com.locationshare.client.api.DeviceCommand
 import com.locationshare.client.api.LocationMsg
@@ -30,8 +32,8 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * 前台服务：以 device_token 连接服务器 WebSocket，
- * 收到 get_location 时上报本机真实 GPS。
- * 使 Android 客户端同时具备 03-device 代理的发送位置能力。
+ * 收到 get_location 时用系统 LocationManager 上报本机 GPS。
+ * 不依赖 Google Play 服务。
  */
 class DeviceShareService : Service() {
 
@@ -87,13 +89,19 @@ class DeviceShareService : Service() {
     private val gson = Gson()
     private var webSocket: WebSocket? = null
     private val running = AtomicBoolean(false)
-    private var fusedClient: FusedLocationProviderClient? = null
-    private var lastLocation: Location? = null
+    private var locationManager: LocationManager? = null
+    @Volatile private var lastLocation: Location? = null
 
-    private val locationCallback = object : LocationCallback() {
-        override fun onLocationResult(result: LocationResult) {
-            result.lastLocation?.let { lastLocation = it }
+    private val locationListener = object : LocationListener {
+        override fun onLocationChanged(location: Location) {
+            lastLocation = location
+            Log.d(TAG, "location update ${location.latitude},${location.longitude}")
         }
+
+        @Deprecated("Deprecated in API")
+        override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) {}
+        override fun onProviderEnabled(provider: String) {}
+        override fun onProviderDisabled(provider: String) {}
     }
 
     private val okClient by lazy {
@@ -108,7 +116,7 @@ class DeviceShareService : Service() {
     override fun onCreate() {
         super.onCreate()
         createChannel()
-        fusedClient = LocationServices.getFusedLocationProviderClient(this)
+        locationManager = getSystemService(Context.LOCATION_SERVICE) as LocationManager
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -195,22 +203,70 @@ class DeviceShareService : Service() {
             Log.w(TAG, "no location permission")
             return
         }
-        val request = LocationRequest.Builder(Priority.PRIORITY_BALANCED_POWER_ACCURACY, 15_000L)
-            .setMinUpdateIntervalMillis(8_000L)
-            .setMaxUpdates(Int.MAX_VALUE)
-            .build()
+        val lm = locationManager ?: return
         try {
-            fusedClient?.requestLocationUpdates(request, locationCallback, Looper.getMainLooper())
-            fusedClient?.lastLocation?.addOnSuccessListener { loc ->
-                if (loc != null) lastLocation = loc
+            // 先读缓存
+            val lastGps = try {
+                lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            } catch (_: SecurityException) {
+                null
             }
+            val lastNet = try {
+                lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            } catch (_: SecurityException) {
+                null
+            }
+            lastLocation = pickBetter(lastGps, lastNet) ?: lastLocation
+
+            val minTime = 8_000L
+            val minDist = 5f
+            if (lm.isProviderEnabled(LocationManager.GPS_PROVIDER)) {
+                lm.requestLocationUpdates(
+                    LocationManager.GPS_PROVIDER, minTime, minDist,
+                    locationListener, Looper.getMainLooper()
+                )
+            }
+            if (lm.isProviderEnabled(LocationManager.NETWORK_PROVIDER)) {
+                lm.requestLocationUpdates(
+                    LocationManager.NETWORK_PROVIDER, minTime, minDist,
+                    locationListener, Looper.getMainLooper()
+                )
+            }
+            // 部分机型还有 PASSIVE
+            try {
+                if (lm.isProviderEnabled(LocationManager.PASSIVE_PROVIDER)) {
+                    lm.requestLocationUpdates(
+                        LocationManager.PASSIVE_PROVIDER, minTime, minDist,
+                        locationListener, Looper.getMainLooper()
+                    )
+                }
+            } catch (_: Exception) {
+            }
+            Log.i(TAG, "LocationManager updates started, last=${lastLocation?.latitude},${lastLocation?.longitude}")
         } catch (e: SecurityException) {
             Log.e(TAG, "location security", e)
+        } catch (e: Exception) {
+            Log.e(TAG, "startLocationUpdates", e)
         }
     }
 
     private fun stopLocationUpdates() {
-        fusedClient?.removeLocationUpdates(locationCallback)
+        try {
+            locationManager?.removeUpdates(locationListener)
+        } catch (_: Exception) {
+        }
+    }
+
+    private fun pickBetter(a: Location?, b: Location?): Location? {
+        if (a == null) return b
+        if (b == null) return a
+        // 优先更新时间新的；相近时优先精度更好的
+        val timeDelta = a.time - b.time
+        if (timeDelta > 30_000) return a
+        if (timeDelta < -30_000) return b
+        val accA = if (a.hasAccuracy()) a.accuracy else Float.MAX_VALUE
+        val accB = if (b.hasAccuracy()) b.accuracy else Float.MAX_VALUE
+        return if (accA <= accB) a else b
     }
 
     private fun connectDeviceWs(deviceToken: String) {
@@ -259,7 +315,7 @@ class DeviceShareService : Service() {
     }
 
     private fun scheduleReconnect(token: String) {
-        android.os.Handler(Looper.getMainLooper()).postDelayed({
+        Handler(Looper.getMainLooper()).postDelayed({
             if (running.get()) {
                 webSocket?.cancel()
                 connectDeviceWs(token)
@@ -268,10 +324,13 @@ class DeviceShareService : Service() {
     }
 
     private fun respondLocation(ws: WebSocket, requestId: String?) {
-        val loc = lastLocation
         val deviceId = getSharedPreferences(PREFS, Context.MODE_PRIVATE)
             .getLong(KEY_DEVICE_ID, 0).toString()
 
+        // 再尝试刷新 lastKnown
+        refreshLastKnown()
+
+        val loc = lastLocation
         val lat: Double
         val lon: Double
         val acc: Double
@@ -280,26 +339,26 @@ class DeviceShareService : Service() {
             lon = loc.longitude
             acc = if (loc.hasAccuracy()) loc.accuracy.toDouble() else 30.0
         } else {
-            // 无定位时回退到 0,0 并标记低精度（调用方仍能收到响应）
             lat = 0.0
             lon = 0.0
             acc = 9999.0
-            Log.w(TAG, "no location available, sending zeros")
-            // 尝试再取一次 lastLocation
-            if (hasLocationPermission()) {
-                try {
-                    fusedClient?.lastLocation?.addOnSuccessListener { l ->
-                        if (l != null) {
-                            lastLocation = l
-                            sendLoc(ws, deviceId, l.latitude, l.longitude,
-                                if (l.hasAccuracy()) l.accuracy.toDouble() else 30.0, requestId)
-                        }
-                    }
-                } catch (_: SecurityException) {}
-            }
+            Log.w(TAG, "no location available")
         }
-
         sendLoc(ws, deviceId, lat, lon, acc, requestId)
+    }
+
+    private fun refreshLastKnown() {
+        if (!hasLocationPermission()) return
+        val lm = locationManager ?: return
+        try {
+            val gps = lm.getLastKnownLocation(LocationManager.GPS_PROVIDER)
+            val net = lm.getLastKnownLocation(LocationManager.NETWORK_PROVIDER)
+            val better = pickBetter(gps, net)
+            if (better != null) {
+                lastLocation = pickBetter(lastLocation, better)
+            }
+        } catch (_: SecurityException) {
+        }
     }
 
     private fun sendLoc(
